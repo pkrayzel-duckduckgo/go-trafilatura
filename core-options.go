@@ -147,8 +147,8 @@ type Options struct {
 	// Whether to filter out cookie banners with custom discard selector or not.
 	FilterCookieBanners bool
 
-	// Whether to filter out video modals with custom discard selector or not.
-	FilterVideoModals bool
+	// Whether to filter out audio/video/media modals with custom discard selector or not.
+	FilterMediaModals bool
 }
 
 // Config is advanced setting to fine tune the extraction result.

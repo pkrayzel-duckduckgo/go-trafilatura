@@ -134,8 +134,8 @@ func ExtractDocument(doc *html.Node, opts Options) (*ExtractResult, error) {
 		doc = pruneUnwantedNodes(doc, []selector.Rule{selector.DiscardedLegalRule}, false)
 	}
 
-	if opts.FilterVideoModals {
-		doc = pruneUnwantedNodes(doc, []selector.Rule{selector.DiscardedVideoUIRule}, false)
+	if opts.FilterMediaModals {
+		doc = pruneUnwantedNodes(doc, []selector.Rule{selector.DiscardedMediaUIRule}, false)
 	}
 
 	// Backup document to make sure the original kept untouched
