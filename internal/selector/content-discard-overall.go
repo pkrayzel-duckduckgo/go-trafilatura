@@ -32,6 +32,7 @@ var OverallDiscardedContent = []Rule{
 	overallDiscardedContentRule1,
 	overallDiscardedContentRule2,
 	DiscardedLegalRule,
+	DiscardedVideoUIRule,
 }
 
 // navigation + footers, news outlets related posts, sharing, jp-post-flair jp-relatedposts
@@ -281,6 +282,72 @@ func DiscardedLegalRule(n *html.Node) bool {
 		contains(idClassLower, "truste"),
 		contains(idClassLower, "evidon"),
 		contains(idClassLower, "onetrust"):
+		return true
+	}
+
+	return false
+}
+
+// DiscardedVideoUIRule filters out video player containers and modal/dialog
+// boilerplate that often pollutes fallback content extraction.
+//
+// It returns true when the node (or its attributes) match any of the
+// heuristics; selector.PruneUnwantedSections will then remove the node.
+func DiscardedVideoUIRule(n *html.Node) bool {
+	tag := dom.TagName(n)
+	id := dom.ID(n)
+	class := dom.ClassName(n)
+	idClass := id + class
+	idClassLower := lower(idClass) // helper already defined in selector utils
+
+	// ------------------------------------------------------------------
+	// 1. Tags explicitly related to video elements
+	// ------------------------------------------------------------------
+	if tag == "video" || tag == "source" {
+		return true
+	}
+
+	// <p class="vjs-no-js"> fallback
+	if tag == "p" && contains(class, "vjs-no-js") {
+		return true
+	}
+
+	// ------------------------------------------------------------------
+	// 2. Common video player containers
+	// ------------------------------------------------------------------
+	switch {
+	case contains(idClassLower, "video-player"),
+		contains(idClassLower, "vjs-"),
+		contains(idClassLower, "videojs"),
+		contains(idClassLower, "html5-video"),
+		contains(idClassLower, "mux-player"),
+		contains(idClassLower, "plyr"): // other common player lib
+		return true
+	}
+
+	// ------------------------------------------------------------------
+	// 3. Modal or dialog boilerplate often embedded in video overlays
+	// ------------------------------------------------------------------
+	switch {
+	case contains(idClassLower, "modal"),
+		contains(idClassLower, "dialog"),
+		contains(idClassLower, "lightbox"),
+		contains(idClassLower, "popup"),
+		contains(idClassLower, "overlay"):
+		return true
+	}
+
+	// ------------------------------------------------------------------
+	// 4. Video-specific script embeds (optional)
+	// ------------------------------------------------------------------
+	src := dom.GetAttribute(n, "src")
+	srcLower := lower(src)
+
+	if tag == "script" && (contains(srcLower, "videojs") ||
+		contains(srcLower, "vjs") ||
+		contains(srcLower, "mux") ||
+		contains(srcLower, "brightcove") ||
+		contains(srcLower, "jwplayer")) {
 		return true
 	}
 
