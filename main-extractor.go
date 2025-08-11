@@ -3,6 +3,7 @@ package trafilatura
 import (
 	"maps"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/go-shiori/dom"
@@ -894,4 +895,64 @@ func extractComments(doc *html.Node, cache *lru.Cache, opts Options) (*html.Node
 	}
 
 	return nil, ""
+}
+
+func wordCount(text string) int {
+	count := 0
+	inWord := false
+
+	for _, r := range text {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if !inWord {
+				count++
+				inWord = true
+			}
+		} else {
+			inWord = false
+		}
+	}
+
+	return count
+}
+
+func isLowQualityContent(n *html.Node, opts Options) bool {
+	longSentenceCount, wordListCount, totalWords := analyzeContentStructure(n, opts)
+
+	// Check for narrative (long-form) content
+	if hasSufficientNarrativeContent(longSentenceCount, opts) {
+		return false
+	}
+
+	// Check for structured content (e.g. dictionary word lists)
+	if hasSufficientStructuredContent(wordListCount, totalWords, opts) {
+		return false
+	}
+
+	// Fallback: assume low quality if neither heuristic is satisfied
+	return true
+}
+
+func analyzeContentStructure(n *html.Node, opts Options) (longSentences int, wordListBlocks int, totalWords int) {
+	for _, c := range dom.Children(n) {
+		txt := trim(etree.IterTextWithSpacing(c))
+		wc := wordCount(txt)
+		totalWords += wc
+
+		hasDot := strings.Contains(txt, ".")
+		if wc >= opts.Config.MinWordsPerSentence && hasDot {
+			longSentences++
+		} else if wc >= opts.Config.MinWordsPerStructuredBlock && !hasDot {
+			wordListBlocks++
+		}
+	}
+	return
+}
+
+func hasSufficientNarrativeContent(longSentences int, opts Options) bool {
+	return longSentences >= opts.Config.MinNarrativeSentences
+}
+
+func hasSufficientStructuredContent(wordListBlocks, totalWords int, opts Options) bool {
+	return wordListBlocks >= opts.Config.MinStructuredBlocks &&
+		totalWords >= opts.Config.MinTotalWords
 }
