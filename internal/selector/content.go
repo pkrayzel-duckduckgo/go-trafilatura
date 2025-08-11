@@ -32,6 +32,7 @@ var Content = []Rule{
 	contentRule3,
 	contentRule4,
 	contentRule5,
+	contentRuleBBCSummary,
 }
 
 // `.//*[self::article or self::div or self::main or self::section][
@@ -231,4 +232,11 @@ func contentRule5(n *html.Node) bool {
 	}
 
 	return true
+}
+
+func contentRuleBBCSummary(n *html.Node) bool {
+	tag := dom.TagName(n)
+	dataComponent := dom.GetAttribute(n, "data-component")
+
+	return tag == "section" && dataComponent == "summary-block"
 }

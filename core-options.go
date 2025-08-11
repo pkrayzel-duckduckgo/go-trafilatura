@@ -149,6 +149,12 @@ type Options struct {
 
 	// Whether to filter out audio/video/media modals with custom discard selector or not.
 	FilterMediaModals bool
+
+	// Whether to include lists in the wild text recovery or not.
+	IncludeLists bool
+
+	// Whether to include span elements in the wild text recovery or not.
+	IncludeSpans bool
 }
 
 // Config is advanced setting to fine tune the extraction result.

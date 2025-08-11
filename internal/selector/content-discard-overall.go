@@ -251,10 +251,15 @@ func DiscardedLegalRule(n *html.Node) bool {
 	}
 
 	// ------------------------------------------------------------------
-	// 2. Plain footer element (very often just legal text)
+	// 2. Plain footer element (check for actual content first)
 	// ------------------------------------------------------------------
 	if tag == "footer" {
-		return true
+		txt := strings.ToLower(dom.TextContent(n))
+		if strings.Contains(txt, "cookie") || strings.Contains(txt, "consent") || strings.Contains(txt, "privacy") {
+			return true
+		}
+		// Otherwise, keep eg. wikipedia footers etc.
+		return false
 	}
 
 	// ------------------------------------------------------------------
@@ -264,7 +269,7 @@ func DiscardedLegalRule(n *html.Node) bool {
 		return true
 	}
 	// inner OneTrust containers – catch them even if outer div was stripped
-	if strings.HasPrefix(id, "ot-") || strings.Contains(class, "ot-") {
+	if hasOTClass(n) {
 		return true
 	}
 
@@ -285,6 +290,15 @@ func DiscardedLegalRule(n *html.Node) bool {
 		return true
 	}
 
+	return false
+}
+
+func hasOTClass(n *html.Node) bool {
+	for _, c := range strings.Fields(dom.ClassName(n)) {
+		if strings.HasPrefix(c, "ot-") {
+			return true
+		}
+	}
 	return false
 }
 

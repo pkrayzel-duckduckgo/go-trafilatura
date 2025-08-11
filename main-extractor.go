@@ -50,7 +50,7 @@ func handleTitles(element *html.Node, cache *lru.Cache, opts Options) *html.Node
 		}
 	}
 
-	if title != nil && textCharsTest(etree.IterText(title, " ")) {
+	if title != nil && textCharsTest(etree.IterTextWithSpacing(title)) {
 		return title
 	}
 
@@ -118,7 +118,7 @@ func processNestedElement(child, newChildElement *html.Node, cache *lru.Cache, o
 
 // isTextElement checks if the element contains text.
 func isTextElement(element *html.Node) bool {
-	return element != nil && textCharsTest(etree.IterText(element, " "))
+	return element != nil && textCharsTest(etree.IterTextWithSpacing(element))
 }
 
 // defineNewElement creates a new sub-element if necessary.
@@ -594,6 +594,14 @@ func recoverWildText(doc, resultBody *html.Node, potentialTags map[string]struct
 	selectorList = append(selectorList, listXmlQuoteTags...)
 	selectorList = append(selectorList, "code", "p", "table", `div[class*="w3-code"]`)
 
+	if opts.IncludeLists {
+		selectorList = append(selectorList, "ul", "ol", "dl", "li")
+	}
+
+	if opts.IncludeSpans {
+		selectorList = append(selectorList, "span")
+	}
+
 	if opts.Focus == FavorRecall {
 		potentialTags = maps.Clone(potentialTags)
 		potentialTags["div"] = struct{}{}
@@ -612,7 +620,7 @@ func recoverWildText(doc, resultBody *html.Node, potentialTags map[string]struct
 	// Decide if links are preserved
 	if _, exist := potentialTags["a"]; !exist {
 		etree.StripTags(searchDoc, "a", "ref", "span")
-	} else {
+	} else if _, exist := potentialTags["span"]; !exist {
 		etree.StripTags(searchDoc, "span")
 	}
 
@@ -732,7 +740,7 @@ func extractContent(doc *html.Node, cache *lru.Cache, opts Options) (*html.Node,
 		// Check if there are enough <p> with text
 		var paragraphText string
 		for _, p := range dom.GetElementsByTagName(doc, "p") {
-			paragraphText += dom.TextContent(p)
+			paragraphText += etree.IterTextWithSpacing(p)
 		}
 
 		factor := 3
