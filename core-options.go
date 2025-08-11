@@ -25,6 +25,7 @@ import (
 	nurl "net/url"
 
 	"github.com/markusmobius/go-htmldate"
+	"github.com/rs/zerolog"
 	"golang.org/x/net/html"
 )
 
@@ -155,6 +156,11 @@ type Options struct {
 
 	// Whether to include span elements in the wild text recovery or not.
 	IncludeSpans bool
+
+	// What phrases to debug throughout the extraction process.
+	DebugTargetPhrases []string
+	// DebugLogger is the logger used to log debug messages.
+	DebugLogger zerolog.Logger
 }
 
 // Config is advanced setting to fine tune the extraction result.

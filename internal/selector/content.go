@@ -33,6 +33,7 @@ var Content = []Rule{
 	contentRule4,
 	contentRule5,
 	contentRuleBBCSummary,
+	contentRuleWikipediaCategory,
 }
 
 // `.//*[self::article or self::div or self::main or self::section][
@@ -239,4 +240,20 @@ func contentRuleBBCSummary(n *html.Node) bool {
 	dataComponent := dom.GetAttribute(n, "data-component")
 
 	return tag == "section" && dataComponent == "summary-block"
+}
+
+func contentRuleWikipediaCategory(n *html.Node) bool {
+	id := dom.ID(n)
+	class := dom.ClassName(n)
+	tag := dom.TagName(n)
+
+	if tag != "div" {
+		return false
+	}
+
+	if id == "mw-pages" || class == "mw-category-group" || class == "mw-category" {
+		return true
+	}
+
+	return false
 }

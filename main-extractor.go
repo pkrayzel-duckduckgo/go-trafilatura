@@ -643,9 +643,12 @@ func pruneUnwantedSections(subTree *html.Node, potentialTags map[string]struct{}
 	// Prune the rest
 	subTree = pruneUnwantedNodes(subTree, selector.OverallDiscardedContent, true)
 
+	tracePhrase("prune-unwanted-sections-first-pruning-step", subTree, opts)
+
 	// Prune images
 	if !opts.IncludeImages {
 		subTree = pruneUnwantedNodes(subTree, selector.DiscardedImage)
+		tracePhrase("prune-unwanted-sections-pruning-images-step", subTree, opts)
 	}
 
 	// Balance precision / recall
@@ -653,6 +656,7 @@ func pruneUnwantedSections(subTree *html.Node, potentialTags map[string]struct{}
 		subTree = pruneUnwantedNodes(subTree, selector.DiscardedTeaser)
 		if opts.Focus == FavorPrecision {
 			subTree = pruneUnwantedNodes(subTree, selector.PrecisionDiscardedContent)
+			tracePhrase("prune-unwanted-sections-pruning-precision-discarded-content-step", subTree, opts)
 		}
 	}
 
@@ -663,6 +667,8 @@ func pruneUnwantedSections(subTree *html.Node, potentialTags map[string]struct{}
 		deleteByLinkDensity(subTree, opts, false, "p")
 	}
 
+	tracePhrase("prune-unwanted-sections-pruning-by-link-density", subTree, opts)
+
 	// Remove tables by link density
 	if _, potential := potentialTags["table"]; potential || opts.Focus == FavorPrecision {
 		tables := etree.Iter(subTree, "table")
@@ -672,6 +678,8 @@ func pruneUnwantedSections(subTree *html.Node, potentialTags map[string]struct{}
 			}
 		}
 	}
+
+	tracePhrase("prune-unwanted-sections-pruning-by-tables-link-density", subTree, opts)
 
 	// Also filter fw/head, table and quote elements?
 	if opts.Focus == FavorPrecision {
@@ -688,6 +696,8 @@ func pruneUnwantedSections(subTree *html.Node, potentialTags map[string]struct{}
 		deleteByLinkDensity(subTree, opts, false, listXmlHeadTags...)
 		deleteByLinkDensity(subTree, opts, false, listXmlQuoteTags...)
 	}
+
+	tracePhrase("prune-unwanted-sections-pruning-by-other-things", subTree, opts)
 
 	return subTree
 }
@@ -728,10 +738,14 @@ func extractContent(doc *html.Node, cache *lru.Cache, opts Options) (*html.Node,
 			continue
 		}
 
+		tracePhrase("extract-content-selecting-content - X - before pruning", subTree, opts)
+
 		// Prune the subtree
 		subTree = pruneUnwantedSections(subTree, potentialTags, opts)
 		// TODO: second pass?
 		// deleteByLinkDensity(subTree, opts, false, listXmlListTags...)
+
+		tracePhrase("extract-content-selecting-content - X - after pruning", subTree, opts)
 
 		// If sub tree now empty, try other selector
 		if len(dom.Children(subTree)) == 0 {
@@ -820,10 +834,13 @@ func extractContent(doc *html.Node, cache *lru.Cache, opts Options) (*html.Node,
 		// we want to throw away the result body in the case we're recovering wild
 		// text because it's been too short so far, but we haven't missed too much paragraphs
 		if missingRatio < float64(opts.Config.MinExtractedParagraphPercent) {
+			log.Println("We haven't missed too much throwing away the results body")
 			resultBody = dom.CreateElement("body")
 		}
 		recoverWildText(backupDoc, resultBody, potentialTags, cache, opts)
 		tmpText = trim(etree.IterTextWithSpacing(resultBody))
+
+		tracePhrase("extract-content-wild-text-recovery", resultBody, opts)
 	}
 
 	// Filter output

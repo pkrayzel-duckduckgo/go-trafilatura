@@ -447,6 +447,15 @@ func postCleaning(doc *html.Node) {
 	}
 }
 
+func isWhitelisted(elem *html.Node) bool {
+	for n := elem; n != nil; n = n.Parent {
+		if dom.GetAttribute(n, "data-whitelist") == "true" {
+			return true
+		}
+	}
+	return false
+}
+
 // deleteByLinkDensity determines the link density of elements with respect to
 // their length, and remove the elements identified as boilerplate.
 func deleteByLinkDensity(subTree *html.Node, opts Options, backtracking bool, tagNames ...string) {
@@ -459,7 +468,19 @@ func deleteByLinkDensity(subTree *html.Node, opts Options, backtracking bool, ta
 		nChildLimit = 1
 	}
 
+	// first pass is to mark whitelisted elements
 	for _, elem := range etree.Iter(subTree, tagNames...) {
+		if selector.IsWhitelistedCategoryList(elem) {
+			dom.SetAttribute(elem, "data-whitelist", "true")
+		}
+	}
+
+	for _, elem := range etree.Iter(subTree, tagNames...) {
+		// Skip whitelisted high-link-density blocks - checking their parents
+		if isWhitelisted(elem) {
+			continue
+		}
+
 		nonEmptyLinks, isHighDensity := linkDensityTest(elem, opts)
 
 		if isHighDensity {
