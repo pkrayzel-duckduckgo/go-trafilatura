@@ -12,6 +12,8 @@ import (
 
 var basicCleaningSelector = strings.Join([]string{
 	`aside`,
+	"nav",
+	"[role='navigation']",
 	`footer`,
 	`div[id*="footer"]`,
 	`div[class*="footer"]`,
