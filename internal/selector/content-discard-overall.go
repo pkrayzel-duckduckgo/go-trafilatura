@@ -32,6 +32,7 @@ var OverallDiscardedContent = []Rule{
 	overallDiscardedContentRule1,
 	overallDiscardedContentRule2,
 	DiscardedLegalRule,
+	DiscardedMediaUIRule,
 }
 
 // navigation + footers, news outlets related posts, sharing, jp-post-flair jp-relatedposts
@@ -284,5 +285,98 @@ func DiscardedLegalRule(n *html.Node) bool {
 		return true
 	}
 
+	return false
+}
+
+func hasClass(n *html.Node, class string) bool {
+	for _, c := range strings.Fields(dom.ClassName(n)) {
+		if c == class {
+			return true
+		}
+	}
+	return false
+}
+
+func DiscardedMediaUIRule(n *html.Node) bool {
+	tag := dom.TagName(n)
+	id := dom.ID(n)
+	class := dom.ClassName(n)
+	idLower := lower(id)
+	classLower := lower(class)
+
+	// Only discard source if it's clearly audio/video
+	if tag == "source" {
+		src := dom.GetAttribute(n, "src")
+		srcLower := lower(src)
+		if strings.HasSuffix(srcLower, ".mp3") || strings.HasSuffix(srcLower, ".ogg") ||
+			strings.HasSuffix(srcLower, ".mp4") || strings.Contains(srcLower, "audio") || strings.Contains(srcLower, "video") {
+			return true
+		}
+		return false // keep image/picture source elements
+	}
+
+	// Explicit tags
+	if tag == "video" || tag == "audio" {
+		return true
+	}
+
+	if tag == "div" {
+		role := lower(dom.GetAttribute(n, "role"))
+		aria := lower(dom.GetAttribute(n, "aria-modal"))
+		if role == "dialog" || aria == "true" {
+			return true
+		}
+
+		if hasClass(n, "modal__content") || hasClass(n, "modal__container") || hasClass(n, "dialog-content") {
+			return true
+		}
+	}
+
+	// Fallbacks for known library classes (but avoid generic ones like "overlay")
+	if tag == "div" || tag == "span" || tag == "button" {
+		switch {
+		case hasClass(n, "video-player"),
+			hasClass(n, "audio-player"),
+			hasClass(n, "audioplayer"),
+			hasClass(n, "vjs-no-js"),
+			hasClass(n, "videojs"),
+			hasClass(n, "html5-video"),
+			hasClass(n, "html5-audio"),
+			hasClass(n, "plyr"),
+			hasClass(n, "mux-player"),
+			hasClass(n, "c_aud"),
+			hasClass(n, "daud"),
+			hasClass(n, "i-volume-up"),
+			hasClass(n, "listen-button"),
+			hasClass(n, "player-wrapper"):
+			return true
+		}
+	}
+
+	// Avoid matching generic classes like "overlay", "modal" unless they're clearly part of a media container
+	if strings.Contains(idLower+classLower, "modal") && isLikelyMediaOverlay(n) {
+		return true
+	}
+
+	// Specific scripts
+	if tag == "script" {
+		src := lower(dom.GetAttribute(n, "src"))
+		if strings.Contains(src, "videojs") || strings.Contains(src, "jwplayer") || strings.Contains(src, "soundcloud") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isLikelyMediaOverlay(n *html.Node) bool {
+	// Look upward for any <video>/<audio> ancestor within 3 hops
+	count := 0
+	for parent := n.Parent; parent != nil && count < 3; parent = parent.Parent {
+		if tag := dom.TagName(parent); tag == "video" || tag == "audio" {
+			return true
+		}
+		count++
+	}
 	return false
 }
