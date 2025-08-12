@@ -52,7 +52,7 @@ var OverallDiscardedContent = []Rule{
 // contains(@id|@class, "cookie") or
 // contains(@id|@class, "tags") or contains(@class, "tag-list") or
 // contains(@id|@class, "sidebar") or
-// contains(@id|@class, "banner") or contains(@class, "bar") or
+// contains(@id|@class, "site-banner") or contains(@class, "bar") or
 // contains(@class, "meta") or contains(@id, "menu") or contains(@class, "menu") or
 // contains(translate(@id, "N", "n"), "nav") or contains(translate(@role, "N", "n"), "nav")
 // or starts-with(@class, "nav") or contains(@class, "avigation") or
@@ -119,7 +119,7 @@ func overallDiscardedContentRule1(n *html.Node) bool {
 		contains(idClass, "tags"),
 		contains(class, "tag-list"),
 		contains(idClass, "sidebar"),
-		contains(idClass, "banner"),
+		contains(idClass, "site-banner"),
 		contains(class, "bar"),
 		contains(class, "meta"),
 		contains(id, "menu"),
