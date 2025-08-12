@@ -834,7 +834,6 @@ func extractContent(doc *html.Node, cache *lru.Cache, opts Options) (*html.Node,
 		// we want to throw away the result body in the case we're recovering wild
 		// text because it's been too short so far, but we haven't missed too much paragraphs
 		if missingRatio < float64(opts.Config.MinExtractedParagraphPercent) {
-			log.Println("We haven't missed too much throwing away the results body")
 			resultBody = dom.CreateElement("body")
 		}
 		recoverWildText(backupDoc, resultBody, potentialTags, cache, opts)
