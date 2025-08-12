@@ -25,6 +25,7 @@ import (
 	nurl "net/url"
 
 	"github.com/markusmobius/go-htmldate"
+	"github.com/rs/zerolog"
 	"golang.org/x/net/html"
 )
 
@@ -146,6 +147,20 @@ type Options struct {
 
 	// Whether to filter out cookie banners with custom discard selector or not.
 	FilterCookieBanners bool
+
+	// Whether to filter out audio/video/media modals with custom discard selector or not.
+	FilterMediaModals bool
+
+	// Whether to include lists in the wild text recovery or not.
+	IncludeLists bool
+
+	// Whether to include span elements in the wild text recovery or not.
+	IncludeSpans bool
+
+	// What phrases to debug throughout the extraction process.
+	DebugTargetPhrases []string
+	// DebugLogger is the logger used to log debug messages.
+	DebugLogger zerolog.Logger
 }
 
 // Config is advanced setting to fine tune the extraction result.
@@ -168,6 +183,28 @@ type Config struct {
 	// that should be extracted. If the ratio is bellow this percentage,
 	// recoverWildText will be used to try to recover more text.
 	MinExtractedParagraphPercent float64
+
+	// What is the minimum word count of a sentence that should be considered quality.
+	MinWordsPerSentence int
+
+	// What is the minimum number of sentences that should be extracted to consider the
+	// document as valid. If the number of sentences is bellow this number,
+	// the fallback mechanism will be used to try to recover more text.
+	MinNarrativeSentences int
+
+	// Structured content config
+
+	// What is the minimum number of words in a list item that should be considered quality content.
+	// This is used for dictionary pages where the list items are often very short and not sentences.
+	MinWordsPerStructuredBlock int
+
+	// What is the minimum number of structured blocks that should be extracted to consider the
+	// document as valid. If the number of structured blocks is bellow this number,
+	// the fallback mechanism will be used to try to recover more text.
+	MinStructuredBlocks int
+
+	// Threshold for minimum number of words to be considered dictionary/structured content
+	MinTotalWords int
 }
 
 // DefaultConfig returns the default configuration value.

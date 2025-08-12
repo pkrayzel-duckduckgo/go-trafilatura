@@ -3,6 +3,7 @@ package trafilatura
 import (
 	"maps"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/go-shiori/dom"
@@ -50,7 +51,7 @@ func handleTitles(element *html.Node, cache *lru.Cache, opts Options) *html.Node
 		}
 	}
 
-	if title != nil && textCharsTest(etree.IterText(title, " ")) {
+	if title != nil && textCharsTest(etree.IterTextWithSpacing(title)) {
 		return title
 	}
 
@@ -118,7 +119,7 @@ func processNestedElement(child, newChildElement *html.Node, cache *lru.Cache, o
 
 // isTextElement checks if the element contains text.
 func isTextElement(element *html.Node) bool {
-	return element != nil && textCharsTest(etree.IterText(element, " "))
+	return element != nil && textCharsTest(etree.IterTextWithSpacing(element))
 }
 
 // defineNewElement creates a new sub-element if necessary.
@@ -594,6 +595,14 @@ func recoverWildText(doc, resultBody *html.Node, potentialTags map[string]struct
 	selectorList = append(selectorList, listXmlQuoteTags...)
 	selectorList = append(selectorList, "code", "p", "table", `div[class*="w3-code"]`)
 
+	if opts.IncludeLists {
+		selectorList = append(selectorList, "ul", "ol", "dl", "li")
+	}
+
+	if opts.IncludeSpans {
+		selectorList = append(selectorList, "span")
+	}
+
 	if opts.Focus == FavorRecall {
 		potentialTags = maps.Clone(potentialTags)
 		potentialTags["div"] = struct{}{}
@@ -612,7 +621,7 @@ func recoverWildText(doc, resultBody *html.Node, potentialTags map[string]struct
 	// Decide if links are preserved
 	if _, exist := potentialTags["a"]; !exist {
 		etree.StripTags(searchDoc, "a", "ref", "span")
-	} else {
+	} else if _, exist := potentialTags["span"]; !exist {
 		etree.StripTags(searchDoc, "span")
 	}
 
@@ -634,9 +643,12 @@ func pruneUnwantedSections(subTree *html.Node, potentialTags map[string]struct{}
 	// Prune the rest
 	subTree = pruneUnwantedNodes(subTree, selector.OverallDiscardedContent, true)
 
+	tracePhrase("prune-unwanted-sections-first-pruning-step", subTree, opts)
+
 	// Prune images
 	if !opts.IncludeImages {
 		subTree = pruneUnwantedNodes(subTree, selector.DiscardedImage)
+		tracePhrase("prune-unwanted-sections-pruning-images-step", subTree, opts)
 	}
 
 	// Balance precision / recall
@@ -644,6 +656,7 @@ func pruneUnwantedSections(subTree *html.Node, potentialTags map[string]struct{}
 		subTree = pruneUnwantedNodes(subTree, selector.DiscardedTeaser)
 		if opts.Focus == FavorPrecision {
 			subTree = pruneUnwantedNodes(subTree, selector.PrecisionDiscardedContent)
+			tracePhrase("prune-unwanted-sections-pruning-precision-discarded-content-step", subTree, opts)
 		}
 	}
 
@@ -654,6 +667,8 @@ func pruneUnwantedSections(subTree *html.Node, potentialTags map[string]struct{}
 		deleteByLinkDensity(subTree, opts, false, "p")
 	}
 
+	tracePhrase("prune-unwanted-sections-pruning-by-link-density", subTree, opts)
+
 	// Remove tables by link density
 	if _, potential := potentialTags["table"]; potential || opts.Focus == FavorPrecision {
 		tables := etree.Iter(subTree, "table")
@@ -663,6 +678,8 @@ func pruneUnwantedSections(subTree *html.Node, potentialTags map[string]struct{}
 			}
 		}
 	}
+
+	tracePhrase("prune-unwanted-sections-pruning-by-tables-link-density", subTree, opts)
 
 	// Also filter fw/head, table and quote elements?
 	if opts.Focus == FavorPrecision {
@@ -679,6 +696,8 @@ func pruneUnwantedSections(subTree *html.Node, potentialTags map[string]struct{}
 		deleteByLinkDensity(subTree, opts, false, listXmlHeadTags...)
 		deleteByLinkDensity(subTree, opts, false, listXmlQuoteTags...)
 	}
+
+	tracePhrase("prune-unwanted-sections-pruning-by-other-things", subTree, opts)
 
 	return subTree
 }
@@ -719,10 +738,14 @@ func extractContent(doc *html.Node, cache *lru.Cache, opts Options) (*html.Node,
 			continue
 		}
 
+		tracePhrase("extract-content-selecting-content - X - before pruning", subTree, opts)
+
 		// Prune the subtree
 		subTree = pruneUnwantedSections(subTree, potentialTags, opts)
 		// TODO: second pass?
 		// deleteByLinkDensity(subTree, opts, false, listXmlListTags...)
+
+		tracePhrase("extract-content-selecting-content - X - after pruning", subTree, opts)
 
 		// If sub tree now empty, try other selector
 		if len(dom.Children(subTree)) == 0 {
@@ -732,7 +755,7 @@ func extractContent(doc *html.Node, cache *lru.Cache, opts Options) (*html.Node,
 		// Check if there are enough <p> with text
 		var paragraphText string
 		for _, p := range dom.GetElementsByTagName(doc, "p") {
-			paragraphText += dom.TextContent(p)
+			paragraphText += etree.IterTextWithSpacing(p)
 		}
 
 		factor := 3
@@ -815,6 +838,8 @@ func extractContent(doc *html.Node, cache *lru.Cache, opts Options) (*html.Node,
 		}
 		recoverWildText(backupDoc, resultBody, potentialTags, cache, opts)
 		tmpText = trim(etree.IterTextWithSpacing(resultBody))
+
+		tracePhrase("extract-content-wild-text-recovery", resultBody, opts)
 	}
 
 	// Filter output
@@ -886,4 +911,64 @@ func extractComments(doc *html.Node, cache *lru.Cache, opts Options) (*html.Node
 	}
 
 	return nil, ""
+}
+
+func wordCount(text string) int {
+	count := 0
+	inWord := false
+
+	for _, r := range text {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if !inWord {
+				count++
+				inWord = true
+			}
+		} else {
+			inWord = false
+		}
+	}
+
+	return count
+}
+
+func isLowQualityContent(n *html.Node, opts Options) bool {
+	longSentenceCount, wordListCount, totalWords := analyzeContentStructure(n, opts)
+
+	// Check for narrative (long-form) content
+	if hasSufficientNarrativeContent(longSentenceCount, opts) {
+		return false
+	}
+
+	// Check for structured content (e.g. dictionary word lists)
+	if hasSufficientStructuredContent(wordListCount, totalWords, opts) {
+		return false
+	}
+
+	// Fallback: assume low quality if neither heuristic is satisfied
+	return true
+}
+
+func analyzeContentStructure(n *html.Node, opts Options) (longSentences int, wordListBlocks int, totalWords int) {
+	for _, c := range dom.Children(n) {
+		txt := trim(etree.IterTextWithSpacing(c))
+		wc := wordCount(txt)
+		totalWords += wc
+
+		hasDot := strings.Contains(txt, ".")
+		if wc >= opts.Config.MinWordsPerSentence && hasDot {
+			longSentences++
+		} else if wc >= opts.Config.MinWordsPerStructuredBlock && !hasDot {
+			wordListBlocks++
+		}
+	}
+	return
+}
+
+func hasSufficientNarrativeContent(longSentences int, opts Options) bool {
+	return longSentences >= opts.Config.MinNarrativeSentences
+}
+
+func hasSufficientStructuredContent(wordListBlocks, totalWords int, opts Options) bool {
+	return wordListBlocks >= opts.Config.MinStructuredBlocks &&
+		totalWords >= opts.Config.MinTotalWords
 }

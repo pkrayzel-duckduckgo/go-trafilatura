@@ -26,6 +26,7 @@ import (
 	"io"
 	nurl "net/url"
 	"os"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/andybalholm/cascadia"
@@ -120,6 +121,8 @@ func ExtractDocument(doc *html.Node, opts Options) (*ExtractResult, error) {
 		}
 	}
 
+	tracePhrase("html-parsing", doc, opts)
+
 	// Prune using selectors that user specified.
 	// No backup as this is completely full control of the user.
 	if opts.PruneSelector != "" {
@@ -131,8 +134,13 @@ func ExtractDocument(doc *html.Node, opts Options) (*ExtractResult, error) {
 	}
 
 	if opts.FilterCookieBanners {
-		// DDG - custom prune selectors
-		doc = pruneUnwantedNodes(doc, selector.CustomDDGSelectors, false)
+		doc = pruneUnwantedNodes(doc, []selector.Rule{selector.DiscardedLegalRule}, false)
+		tracePhrase("filter-cookie-banners", doc, opts)
+	}
+
+	if opts.FilterMediaModals {
+		doc = pruneUnwantedNodes(doc, []selector.Rule{selector.DiscardedMediaUIRule}, false)
+		tracePhrase("filter-media-modals", doc, opts)
 	}
 
 	// Backup document to make sure the original kept untouched
@@ -159,15 +167,39 @@ func ExtractDocument(doc *html.Node, opts Options) (*ExtractResult, error) {
 	// Extract content
 	postBody, tmpBodyText := extractContent(doc, cache, opts)
 
+	tracePhrase("post-extract-content", postBody, opts)
+
+	// TBD - check whether sentence X was present in the full doc after content extraction (without fallbacks here)
+
 	// Use fallback if necessary
 	if opts.EnableFallback {
 		postBody, tmpBodyText = compareExternalExtraction(docBackup1, postBody, opts)
+		tracePhrase("post-external-extraction", postBody, opts)
 	}
 
 	// Rescue: try to use original/dirty tree
 	lenText := utf8.RuneCountInString(tmpBodyText)
+
 	if lenText < opts.Config.MinExtractedSize && opts.Focus != FavorPrecision {
 		postBody, tmpBodyText = baseline(docBackup2)
+		tracePhrase("post-rescue-from-original-tree", postBody, opts)
+	}
+
+	originalIsLowQuality := isLowQualityContent(postBody, opts)
+
+	if originalIsLowQuality {
+
+		rescuedPostBody, rescuedTmpBodyText := baseline(docBackup2)
+
+		rescuedIsLowQuality := isLowQualityContent(rescuedPostBody, opts)
+
+		if len(rescuedTmpBodyText) > len(tmpBodyText) || !rescuedIsLowQuality {
+
+			postBody = rescuedPostBody
+			tmpBodyText = rescuedTmpBodyText
+
+			tracePhrase("post-rescue-from-original-tree-low-quality", rescuedPostBody, opts)
+		}
 	}
 
 	// Tree size sanity check
@@ -222,4 +254,21 @@ func ExtractDocument(doc *html.Node, opts Options) (*ExtractResult, error) {
 		CommentsText: tmpComments,
 		Metadata:     metadata,
 	}, nil
+}
+
+func tracePhrase(stage string, doc *html.Node, opts Options) {
+	if len(opts.DebugTargetPhrases) == 0 {
+		return
+	}
+
+	text := etree.IterTextWithSpacing(doc)
+	for _, phrase := range opts.DebugTargetPhrases {
+		found := strings.Contains(text, phrase)
+		opts.DebugLogger.Info().
+			Str("stage", stage).
+			Str("phrase", phrase).
+			Bool("present", found).
+			Int("length", len(text)).
+			Msg("Phrase check")
+	}
 }
