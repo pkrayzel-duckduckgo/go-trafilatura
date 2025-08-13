@@ -256,68 +256,6 @@ func likelyHTMLFile(path string) bool {
 		strings.Contains(b, "<head") || strings.Contains(b, "<body")
 }
 
-// -------- bucket thresholds & function ----------
-
-const (
-	thContainMuchBetter   = 0.95
-	thContainSlightBetter = 0.90
-	thContainSlightWorseL = 0.70
-)
-
-// labels
-const (
-	lMuchBetter   = "much_better"
-	lSlightBetter = "slightly_better"
-	lSame         = "same"
-	lSlightWorse  = "slightly_worse"
-	lMuchWorse    = "much_worse"
-	lError        = "error"
-)
-
-func bucket(m utils.Metrics) (label string, reason string) {
-	dupDelta := m.DupRatioB - m.DupRatioA
-
-	// much worse
-	if m.ContainmentAinB < thContainSlightWorseL || m.Jaccard < 0.70 ||
-		m.DeltaTokens <= -100 || m.DeltaSent <= -3 || dupDelta > 0.10 ||
-		(m.AShingles > 0 && m.BShingles == 0) {
-		return lMuchWorse, "drop/empty/large_dup_increase"
-	}
-
-	// slightly worse
-	if (m.ContainmentAinB >= thContainSlightWorseL && m.ContainmentAinB < thContainSlightBetter) ||
-		m.DeltaTokens <= -30 || m.DeltaSent <= -1 ||
-		(dupDelta > 0.03 && dupDelta <= 0.10) {
-		return lSlightWorse, "partial_drop_or_dup_increase"
-	}
-
-	// same
-	if m.Jaccard >= 0.98 || (m.ContainmentAinB >= 0.98 && m.ContainmentBinA >= 0.98) {
-		if m.AShingles == 0 && m.BShingles == 0 {
-			return lSame, "both_empty"
-		}
-		return lSame, "sameish"
-	}
-
-	// slightly better
-	if m.ContainmentAinB >= thContainSlightBetter &&
-		m.NovelBminusA >= 0.05 && m.NovelBminusA < 0.15 &&
-		dupDelta <= 0.03 &&
-		(m.DeltaTokens >= 10 || m.DeltaSent >= 1) {
-		return lSlightBetter, "minor_gain_low_dup"
-	}
-
-	// much better
-	if m.ContainmentAinB >= thContainMuchBetter &&
-		m.NovelBminusA >= 0.15 &&
-		dupDelta <= 0.02 &&
-		(m.DeltaTokens >= 50 || m.DeltaSent >= 2) {
-		return lMuchBetter, "clear_gain_low_dup"
-	}
-
-	return lSame, "default_same"
-}
-
 // -------- CSV writer + summary ----------
 
 func writeCSV(path string, results <-chan res, emitBodies bool) error {
@@ -357,7 +295,7 @@ func writeCSV(path string, results <-chan res, emitBodies bool) error {
 		if r.err != nil {
 			rec := []string{r.url, r.file}
 			rec = append(rec, make([]string, 12)...) // metrics blanks
-			rec = append(rec, lError, "error:"+r.err.Error())
+			rec = append(rec, utils.LError, "error:"+r.err.Error())
 			if emitBodies {
 				rec = append(rec, "", "")
 			}
@@ -367,7 +305,7 @@ func writeCSV(path string, results <-chan res, emitBodies bool) error {
 			continue
 		}
 
-		lab, note := bucket(r.m)
+		lab, note := utils.Bucket(r.m)
 		rec := []string{
 			r.url, r.file,
 			fmtf(r.m.ContainmentAinB),
@@ -427,7 +365,7 @@ func summarizeCSV(path string) {
 		}
 	}
 	// stable order in summary
-	labels := []string{lMuchBetter, lSlightBetter, lSame, lSlightWorse, lMuchWorse, lError}
+	labels := []string{utils.LMuchBetter, utils.LSlightBetter, utils.LSame, utils.LSlightWorse, utils.LMuchWorse, utils.LError}
 	fmt.Fprintf(os.Stderr,
 		"bucket summary: %s=%d %s=%d %s=%d %s=%d %s=%d %s=%d (n=%d)\n",
 		labels[0], counts[labels[0]],

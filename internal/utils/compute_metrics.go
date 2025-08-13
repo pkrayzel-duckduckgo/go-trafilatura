@@ -1,9 +1,95 @@
 package utils
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
+
+// -----------------------------
+// Bucketing (exported)
+// -----------------------------
+
+// Thresholds (exported so callers can keep CSV summaries consistent)
+const (
+	ThContainMuchBetter   = 0.95
+	ThContainSlightBetter = 0.90
+	ThContainSlightWorseL = 0.70
+)
+
+// Labels (exported for CSV & summaries)
+const (
+	LMuchBetter   = "much_better"
+	LSlightBetter = "slightly_better"
+	LSame         = "same"
+	LSlightWorse  = "slightly_worse"
+	LMuchWorse    = "much_worse"
+	LError        = "error"
+)
+
+// Bucket assigns a coarse label and reason for an A/B extraction delta, using Metrics.
+// This mirrors the previous CLI-local logic so downstream tooling can rely on a single source of truth.
+
+// labels
+
+const (
+	thContainMuchBetter   = 0.95
+	thContainSlightBetter = 0.90
+	thContainSlightWorseL = 0.70
+)
+
+const (
+	lMuchBetter   = "much_better"
+	lSlightBetter = "slightly_better"
+	lSame         = "same"
+	lSlightWorse  = "slightly_worse"
+	lMuchWorse    = "much_worse"
+	lError        = "error"
+)
+
+func Bucket(m Metrics) (label string, reason string) {
+	dupDelta := m.DupRatioB - m.DupRatioA
+
+	// much worse
+	if m.ContainmentAinB < thContainSlightWorseL || m.Jaccard < 0.70 ||
+		m.DeltaTokens <= -100 || m.DeltaSent <= -3 || dupDelta > 0.10 ||
+		(m.AShingles > 0 && m.BShingles == 0) {
+		return lMuchWorse, "drop/empty/large_dup_increase"
+	}
+
+	// slightly worse
+	if (m.ContainmentAinB >= thContainSlightWorseL && m.ContainmentAinB < thContainSlightBetter) ||
+		m.DeltaTokens <= -30 || m.DeltaSent <= -1 ||
+		(dupDelta > 0.03 && dupDelta <= 0.10) {
+		return lSlightWorse, "partial_drop_or_dup_increase"
+	}
+
+	// same
+	if m.Jaccard >= 0.98 || (m.ContainmentAinB >= 0.98 && m.ContainmentBinA >= 0.98) {
+		if m.AShingles == 0 && m.BShingles == 0 {
+			return lSame, "both_empty"
+		}
+		return lSame, "sameish"
+	}
+
+	// slightly better
+	if m.ContainmentAinB >= thContainSlightBetter &&
+		m.NovelBminusA >= 0.05 && m.NovelBminusA < 0.15 &&
+		dupDelta <= 0.03 &&
+		(m.DeltaTokens >= 10 || m.DeltaSent >= 1) {
+		return lSlightBetter, "minor_gain_low_dup"
+	}
+
+	// much better
+	if m.ContainmentAinB >= thContainMuchBetter &&
+		m.NovelBminusA >= 0.15 &&
+		dupDelta <= 0.02 &&
+		(m.DeltaTokens >= 50 || m.DeltaSent >= 2) {
+		return lMuchBetter, "clear_gain_low_dup"
+	}
+
+	return lSame, "default_same"
+}
 
 type Metrics struct {
 	ContainmentAinB float64 `json:"containment_A_in_B"`
@@ -185,4 +271,9 @@ func sentenceCount(s string) int {
 		}
 	}
 	return count
+}
+
+// small helper kept here to avoid duplicating tiny formatters in callers
+func fmtf(f float64) string {
+	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.6f", f), "0"), ".")
 }

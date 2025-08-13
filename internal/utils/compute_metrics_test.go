@@ -326,6 +326,156 @@ func TestSentenceCountEqualized(t *testing.T) {
 	}
 }
 
+// -----------------------------
+// Bucket tests
+// -----------------------------
+// -----------------------------
+// Bucket tests
+// -----------------------------
+
+func TestBucket(t *testing.T) {
+	type tc struct {
+		name   string
+		m      Metrics
+		expect string
+		reason string
+	}
+	cases := []tc{
+		{
+			name: "much_worse_low_containment",
+			m: Metrics{
+				ContainmentAinB: 0.65, // below ThContainSlightWorseL (0.70)
+				Jaccard:         0.69, // also below 0.70 guard
+				DeltaTokens:     -5,
+				DeltaSent:       0,
+				DupRatioA:       0.00, DupRatioB: 0.05,
+				AShingles: 10, BShingles: 10,
+			},
+			expect: LMuchWorse, reason: "drop/empty/large_dup_increase",
+		},
+		{
+			name: "slightly_worse_partial_drop_by_containment_band",
+			m: Metrics{
+				ContainmentAinB: 0.85, // in [0.70, 0.90)
+				Jaccard:         0.90,
+				DeltaTokens:     -10, // not large enough to trigger much_worse
+				DeltaSent:       0,
+				DupRatioA:       0.02, DupRatioB: 0.03, // dupDelta = 0.01
+				AShingles: 10, BShingles: 10,
+			},
+			expect: LSlightWorse, reason: "partial_drop_or_dup_increase",
+		},
+		{
+			name: "slightly_worse_due_to_dup_increase",
+			m: Metrics{
+				ContainmentAinB: 0.93,
+				Jaccard:         0.93,
+				DeltaTokens:     0,
+				DeltaSent:       0,
+				DupRatioA:       0.02, DupRatioB: 0.07, // dupDelta = 0.05 -> slightly_worse
+				AShingles: 8, BShingles: 8,
+			},
+			expect: LSlightWorse, reason: "partial_drop_or_dup_increase",
+		},
+		{
+			name: "same_both_empty",
+			m: Metrics{
+				ContainmentAinB: 1.0, ContainmentBinA: 1.0, Jaccard: 1.0,
+				AShingles: 0, BShingles: 0,
+			},
+			expect: LSame, reason: "both_empty",
+		},
+		{
+			name: "same_sameish_high_similarity",
+			m: Metrics{
+				ContainmentAinB: 0.99, ContainmentBinA: 0.985, Jaccard: 0.981,
+				AShingles: 5, BShingles: 5,
+			},
+			expect: LSame, reason: "sameish",
+		},
+		{
+			name: "slightly_better_minor_gain_low_dup_by_tokens",
+			m: Metrics{
+				ContainmentAinB: 0.92, // >= 0.90
+				Jaccard:         0.92,
+				NovelBminusA:    0.10,                  // in [0.05, 0.15)
+				DupRatioA:       0.05, DupRatioB: 0.06, // dupDelta = 0.01 <= 0.03
+				DeltaTokens: 12, // >= 10
+				DeltaSent:   0,
+			},
+			expect: LSlightBetter, reason: "minor_gain_low_dup",
+		},
+		{
+			name: "slightly_better_minor_gain_low_dup_by_sentences",
+			m: Metrics{
+				ContainmentAinB: 0.91,
+				Jaccard:         0.91,
+				NovelBminusA:    0.06,
+				DupRatioA:       0.02, DupRatioB: 0.02, // dupDelta = 0.00
+				DeltaTokens: 3,
+				DeltaSent:   1, // >= 1
+			},
+			expect: LSlightBetter, reason: "minor_gain_low_dup",
+		},
+		{
+			name: "much_better_clear_gain_low_dup_by_tokens",
+			m: Metrics{
+				ContainmentAinB: 0.97, // >= 0.95
+				Jaccard:         0.97,
+				NovelBminusA:    0.20,                  // >= 0.15
+				DupRatioA:       0.10, DupRatioB: 0.11, // dupDelta = 0.01 <= 0.02
+				DeltaTokens: 60, // >= 50
+				DeltaSent:   0,
+			},
+			expect: LMuchBetter, reason: "clear_gain_low_dup",
+		},
+		{
+			name: "much_better_clear_gain_low_dup_by_sentences",
+			m: Metrics{
+				ContainmentAinB: 0.96,
+				Jaccard:         0.96,
+				NovelBminusA:    0.18,
+				DupRatioA:       0.03, DupRatioB: 0.03, // dupDelta = 0.00
+				DeltaTokens: 8,
+				DeltaSent:   2, // >= 2
+			},
+			expect: LMuchBetter, reason: "clear_gain_low_dup",
+		},
+		{
+			name: "much_worse_empty_B_after_A_nonempty",
+			m: Metrics{
+				ContainmentAinB: 0.0, Jaccard: 0.0,
+				AShingles: 5, BShingles: 0, // triggers worst case guard
+			},
+			expect: LMuchWorse, reason: "drop/empty/large_dup_increase",
+		},
+		{
+			name: "default_same_catch_all",
+			m: Metrics{
+				ContainmentAinB: 0.91, // not in slightly_worse band, below 0.98 sameish
+				ContainmentBinA: 0.91,
+				Jaccard:         0.91,
+				NovelBminusA:    0.02, // < 0.05 so not slightly_better
+				DupRatioA:       0.02, DupRatioB: 0.02,
+				DeltaTokens: 0,
+				DeltaSent:   0,
+				AShingles:   10, BShingles: 10,
+			},
+			expect: LSame, reason: "default_same",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			got, why := Bucket(tt.m)
+			if got != tt.expect || why != tt.reason {
+				t.Fatalf("Bucket(%+v) = (%s, %s), want (%s, %s)",
+					tt.m, got, why, tt.expect, tt.reason)
+			}
+		})
+	}
+}
+
 func BenchmarkComputeMetrics(b *testing.B) {
 	bodyA := strings.Repeat("This is a sample sentence for benchmarking purposes. ", 100)
 	bodyB := strings.Repeat("This is a modified sentence for benchmarking purposes. ", 95)
