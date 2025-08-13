@@ -20,7 +20,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// ONE type definition for results (avoid duplicate anonymous/nested types).
+// worker result
 type res struct {
 	url, file    string
 	bodyA, bodyB string
@@ -51,7 +51,7 @@ func compareCmd() *cobra.Command {
 				return err
 			}
 			if len(files) == 0 {
-				return fmt.Errorf("no .html files under %s", inDir)
+				return fmt.Errorf("no HTML-like files under %s", inDir)
 			}
 
 			// -------- Define your two option sets here (hard-coded) --------
@@ -65,7 +65,7 @@ func compareCmd() *cobra.Command {
 					MinExtractedCommentSize:      1,
 					MinOutputSize:                0,
 					MinOutputCommentSize:         0,
-					MinExtractedParagraphPercent: 0.25, // your forked heuristic
+					MinExtractedParagraphPercent: 0.25, // fork heuristic
 				},
 				ExcludeComments:     false,
 				IncludeImages:       false,
@@ -74,7 +74,7 @@ func compareCmd() *cobra.Command {
 				EnableFallback:      false,
 				HtmlDateMode:        trafilatura.Disabled, // perf leak avoided
 				FilterCookieBanners: true,
-				// OriginalURL will be set per-document below
+				// OriginalURL set per-document below
 			}
 
 			// B: tweak only what you're testing (edit as needed)
@@ -96,8 +96,7 @@ func compareCmd() *cobra.Command {
 				EnableFallback:      false,
 				HtmlDateMode:        trafilatura.Disabled,
 				FilterCookieBanners: true,
-				// Example change: enable dedup or some new heuristic you’re testing
-				// Deduplicate is a flag on Options, not Config, if you use it:
+				// Example toggle under test:
 				// Deduplicate: true,
 			}
 
@@ -123,7 +122,7 @@ func compareCmd() *cobra.Command {
 							continue
 						}
 
-						// Derive URL string from HTML or file path, set OriginalURL on both opts
+						// Derive URL string, set OriginalURL on both option sets
 						uStr := deriveURL(urlFrom, j.path, htmlBytes)
 						var parsed *url.URL
 						if uStr != "" {
@@ -131,7 +130,8 @@ func compareCmd() *cobra.Command {
 								parsed = pu
 							}
 						}
-						// Copy the base options per doc (avoid sharing pointer fields across goroutines)
+
+						// Copy per doc (avoid sharing pointers across goroutines)
 						a := optsA
 						b := optsB
 						a.OriginalURL = parsed
@@ -150,7 +150,7 @@ func compareCmd() *cobra.Command {
 							continue
 						}
 
-						// Render body text with the same pipeline as the CLI
+						// Render body text via the same pipeline the CLI uses
 						var bufA, bufB bytes.Buffer
 						if err := writeOutput(&bufA, rA, txtCmd); err != nil {
 							out <- res{file: j.path, url: uStr, err: fmt.Errorf("render A: %v", err)}
@@ -190,12 +190,13 @@ func compareCmd() *cobra.Command {
 				return err
 			}
 			log.Info().Msgf("wrote %s", outCSV)
+			summarizeCSV(outCSV)
 			return nil
 		},
 	}
 
 	// Basic args only (A/B options are hard-coded above)
-	cmd.Flags().StringVar(&inDir, "in", "", "Directory with .html files (recursed)")
+	cmd.Flags().StringVar(&inDir, "in", "", "Directory with HTML files (recursed)")
 	cmd.Flags().StringVar(&outCSV, "out", "metrics.csv", "Output CSV path")
 	cmd.Flags().IntVar(&k, "k", 5, "Shingle size k (default 5)")
 	cmd.Flags().IntVar(&concurrency, "concurrency", runtime.NumCPU(), "Parallel workers")
@@ -206,10 +207,12 @@ func compareCmd() *cobra.Command {
 	return cmd
 }
 
-// -------- file walking & CSV ----------
+// -------- file walking (extension + sniff) ----------
 
 func walkHTML(dir string, limit int) ([]string, error) {
+	suffixes := []string{".html", ".htm", ".xhtml", ".shtml"}
 	var files []string
+
 	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -218,7 +221,14 @@ func walkHTML(dir string, limit int) ([]string, error) {
 			return nil
 		}
 		name := strings.ToLower(d.Name())
-		if strings.HasSuffix(name, ".html") || strings.HasSuffix(name, ".htm") {
+		for _, sfx := range suffixes {
+			if strings.HasSuffix(name, sfx) {
+				files = append(files, path)
+				return nil
+			}
+		}
+		// quick content sniff for HTML-like files without a typical extension
+		if likelyHTMLFile(path) {
 			files = append(files, path)
 		}
 		return nil
@@ -232,6 +242,83 @@ func walkHTML(dir string, limit int) ([]string, error) {
 	}
 	return files, nil
 }
+
+func likelyHTMLFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	buf := make([]byte, 4096)
+	n, _ := f.Read(buf)
+	b := strings.ToLower(string(buf[:n]))
+	return strings.Contains(b, "<html") || strings.Contains(b, "<!doctype") ||
+		strings.Contains(b, "<head") || strings.Contains(b, "<body")
+}
+
+// -------- bucket thresholds & function ----------
+
+const (
+	thContainMuchBetter   = 0.95
+	thContainSlightBetter = 0.90
+	thContainSlightWorseL = 0.70
+)
+
+// labels
+const (
+	lMuchBetter   = "much_better"
+	lSlightBetter = "slightly_better"
+	lSame         = "same"
+	lSlightWorse  = "slightly_worse"
+	lMuchWorse    = "much_worse"
+	lError        = "error"
+)
+
+func bucket(m utils.Metrics) (label string, reason string) {
+	dupDelta := m.DupRatioB - m.DupRatioA
+
+	// much worse
+	if m.ContainmentAinB < thContainSlightWorseL || m.Jaccard < 0.70 ||
+		m.DeltaTokens <= -100 || m.DeltaSent <= -3 || dupDelta > 0.10 ||
+		(m.AShingles > 0 && m.BShingles == 0) {
+		return lMuchWorse, "drop/empty/large_dup_increase"
+	}
+
+	// slightly worse
+	if (m.ContainmentAinB >= thContainSlightWorseL && m.ContainmentAinB < thContainSlightBetter) ||
+		m.DeltaTokens <= -30 || m.DeltaSent <= -1 ||
+		(dupDelta > 0.03 && dupDelta <= 0.10) {
+		return lSlightWorse, "partial_drop_or_dup_increase"
+	}
+
+	// same
+	if m.Jaccard >= 0.98 || (m.ContainmentAinB >= 0.98 && m.ContainmentBinA >= 0.98) {
+		if m.AShingles == 0 && m.BShingles == 0 {
+			return lSame, "both_empty"
+		}
+		return lSame, "sameish"
+	}
+
+	// slightly better
+	if m.ContainmentAinB >= thContainSlightBetter &&
+		m.NovelBminusA >= 0.05 && m.NovelBminusA < 0.15 &&
+		dupDelta <= 0.03 &&
+		(m.DeltaTokens >= 10 || m.DeltaSent >= 1) {
+		return lSlightBetter, "minor_gain_low_dup"
+	}
+
+	// much better
+	if m.ContainmentAinB >= thContainMuchBetter &&
+		m.NovelBminusA >= 0.15 &&
+		dupDelta <= 0.02 &&
+		(m.DeltaTokens >= 50 || m.DeltaSent >= 2) {
+		return lMuchBetter, "clear_gain_low_dup"
+	}
+
+	return lSame, "default_same"
+}
+
+// -------- CSV writer + summary ----------
 
 func writeCSV(path string, results <-chan res, emitBodies bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil && !os.IsExist(err) {
@@ -251,6 +338,7 @@ func writeCSV(path string, results <-chan res, emitBodies bool) error {
 		"delta_tokens", "delta_chars", "delta_sentences",
 		"dup_ratio_A", "dup_ratio_B",
 		"A_shingles", "B_shingles", "intersection", "union",
+		"bucket", "note",
 	}
 	if emitBodies {
 		header = append(header, "body_a", "body_b")
@@ -268,7 +356,8 @@ func writeCSV(path string, results <-chan res, emitBodies bool) error {
 	for _, r := range rows {
 		if r.err != nil {
 			rec := []string{r.url, r.file}
-			rec = append(rec, make([]string, 12)...)
+			rec = append(rec, make([]string, 12)...) // metrics blanks
+			rec = append(rec, lError, "error:"+r.err.Error())
 			if emitBodies {
 				rec = append(rec, "", "")
 			}
@@ -277,6 +366,8 @@ func writeCSV(path string, results <-chan res, emitBodies bool) error {
 			}
 			continue
 		}
+
+		lab, note := bucket(r.m)
 		rec := []string{
 			r.url, r.file,
 			fmtf(r.m.ContainmentAinB),
@@ -292,6 +383,7 @@ func writeCSV(path string, results <-chan res, emitBodies bool) error {
 			fmt.Sprintf("%d", r.m.BShingles),
 			fmt.Sprintf("%d", r.m.Intersection),
 			fmt.Sprintf("%d", r.m.Union),
+			lab, note,
 		}
 		if emitBodies {
 			rec = append(rec, r.bodyA, r.bodyB)
@@ -301,6 +393,51 @@ func writeCSV(path string, results <-chan res, emitBodies bool) error {
 		}
 	}
 	return nil
+}
+
+func summarizeCSV(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	r := csv.NewReader(f)
+	rows, err := r.ReadAll()
+	if err != nil || len(rows) <= 1 {
+		return
+	}
+	// find bucket column
+	hdr := rows[0]
+	bi := -1
+	for i, h := range hdr {
+		if h == "bucket" {
+			bi = i
+			break
+		}
+	}
+	if bi < 0 {
+		return
+	}
+	counts := map[string]int{}
+	total := 0
+	for _, rec := range rows[1:] {
+		if len(rec) > bi {
+			counts[rec[bi]]++
+			total++
+		}
+	}
+	// stable order in summary
+	labels := []string{lMuchBetter, lSlightBetter, lSame, lSlightWorse, lMuchWorse, lError}
+	fmt.Fprintf(os.Stderr,
+		"bucket summary: %s=%d %s=%d %s=%d %s=%d %s=%d %s=%d (n=%d)\n",
+		labels[0], counts[labels[0]],
+		labels[1], counts[labels[1]],
+		labels[2], counts[labels[2]],
+		labels[3], counts[labels[3]],
+		labels[4], counts[labels[4]],
+		labels[5], counts[labels[5]],
+		total,
+	)
 }
 
 // -------- URL derivation (for CSV & OriginalURL) ----------
@@ -328,6 +465,8 @@ func deriveURL(mode, htmlPath string, html []byte) string {
 		return "file://" + filepath.ToSlash(htmlPath)
 	}
 }
+
+// small float formatter
 func fmtf(f float64) string {
 	return strings.TrimRight(strings.TrimRight(fmt.Sprintf("%.6f", f), "0"), ".")
 }
