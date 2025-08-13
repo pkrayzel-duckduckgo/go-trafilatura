@@ -27,32 +27,35 @@ type Metrics struct {
 func ComputeMetrics(bodyA, bodyB string, k int) Metrics {
 	A := normalize(bodyA)
 	B := normalize(bodyB)
+
 	Atok := tokenize(A)
 	Btok := tokenize(B)
+
 	Alist, Aset := shingleHashes(Atok, k)
 	Blist, Bset := shingleHashes(Btok, k)
+
 	inter := intersectCount(Aset, Bset)
 	uni := len(Aset) + len(Bset) - inter
 
 	var containAinB, containBinA, jaccard, novel float64
-	if len(Aset) == 0 {
-		containAinB = 1
-	} else {
+	switch {
+	case len(Aset) == 0 && len(Bset) == 0:
+		// Both empty => identical
+		containAinB, containBinA, jaccard, novel = 1.0, 1.0, 1.0, 0.0
+	case len(Aset) == 0 && len(Bset) > 0:
+		// Empty contained in anything; Jaccard 0, all of B is novel
+		containAinB, containBinA, jaccard, novel = 1.0, 0.0, 0.0, 1.0
+	case len(Bset) == 0 && len(Aset) > 0:
+		// Symmetric case
+		containAinB, containBinA, jaccard, novel = 0.0, 1.0, 0.0, 0.0
+	default:
 		containAinB = float64(inter) / float64(len(Aset))
-	}
-	if len(Bset) == 0 {
-		containBinA = 1
-	} else {
 		containBinA = float64(inter) / float64(len(Bset))
-	}
-	if uni == 0 {
-		jaccard = 1
-	} else {
-		jaccard = float64(inter) / float64(uni)
-	}
-	if len(Bset) == 0 {
-		novel = 0
-	} else {
+		if uni == 0 {
+			jaccard = 1.0
+		} else {
+			jaccard = float64(inter) / float64(uni)
+		}
 		novel = float64(len(Bset)-inter) / float64(len(Bset))
 	}
 
@@ -61,44 +64,64 @@ func ComputeMetrics(bodyA, bodyB string, k int) Metrics {
 		ContainmentBinA: containBinA,
 		Jaccard:         jaccard,
 		NovelBminusA:    novel,
-		DeltaTokens:     len(Btok) - len(Atok),
-		DeltaChars:      len(B) - len(A),
-		DeltaSent:       sentenceCount(B) - sentenceCount(A),
-		DupRatioA:       duplicationRatio(Alist),
-		DupRatioB:       duplicationRatio(Blist),
-		AShingles:       len(Aset),
-		BShingles:       len(Bset),
-		Intersection:    inter,
-		Union:           uni,
+
+		DeltaTokens: len(Btok) - len(Atok),
+		DeltaChars:  len(B) - len(A),
+		DeltaSent:   sentenceCount(B) - sentenceCount(A),
+
+		DupRatioA: duplicationRatio(Alist),
+		DupRatioB: duplicationRatio(Blist),
+
+		AShingles:    len(Aset),
+		BShingles:    len(Bset),
+		Intersection: inter,
+		Union:        uni,
 	}
 }
+
+// --- Text processing helpers ---
 
 var wordReCompare = regexp.MustCompile(`\p{L}+|\p{N}+`)
 
 func normalize(s string) string {
+	// Normalize newlines, collapse all whitespace runs to single spaces, and trim
 	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.ReplaceAll(s, "\r", "\n")
 	return strings.TrimSpace(strings.Join(strings.Fields(s), " "))
 }
+
 func tokenize(s string) []string {
 	return wordReCompare.FindAllString(strings.ToLower(s), -1)
 }
+
+// shingleHashes returns both the sequential list of shingle hashes (for duplication ratio)
+// and a set of unique shingle hashes (for set metrics).
+//
+// FIX: When len(tokens) < k but > 0, emit a single shingle from all tokens.
+// This prevents empty-shingle edge cases from producing misleading similarity.
 func shingleHashes(tokens []string, k int) ([]uint64, map[uint64]struct{}) {
 	if k <= 0 {
 		panic("k must be >= 1")
 	}
-	if len(tokens) < k {
+	switch {
+	case len(tokens) == 0:
 		return nil, map[uint64]struct{}{}
+	case len(tokens) < k:
+		joined := strings.Join(tokens, " ")
+		h := fnv64a(joined)
+		return []uint64{h}, map[uint64]struct{}{h: {}}
+	default:
+		list := make([]uint64, 0, len(tokens)-k+1)
+		set := make(map[uint64]struct{}, cap(list))
+		for i := 0; i <= len(tokens)-k; i++ {
+			h := fnv64a(strings.Join(tokens[i:i+k], " "))
+			list = append(list, h)
+			set[h] = struct{}{}
+		}
+		return list, set
 	}
-	list := make([]uint64, 0, len(tokens)-k+1)
-	set := make(map[uint64]struct{}, cap(list))
-	for i := 0; i <= len(tokens)-k; i++ {
-		h := fnv64a(strings.Join(tokens[i:i+k], " "))
-		list = append(list, h)
-		set[h] = struct{}{}
-	}
-	return list, set
 }
+
 func fnv64a(s string) uint64 {
 	const (
 		offset64 = 1469598103934665603
@@ -111,10 +134,12 @@ func fnv64a(s string) uint64 {
 	}
 	return hash
 }
+
 func intersectCount(a, b map[uint64]struct{}) int {
 	if len(a) == 0 || len(b) == 0 {
 		return 0
 	}
+	// iterate smaller set
 	if len(a) > len(b) {
 		a, b = b, a
 	}
@@ -126,6 +151,7 @@ func intersectCount(a, b map[uint64]struct{}) int {
 	}
 	return c
 }
+
 func duplicationRatio(list []uint64) float64 {
 	if len(list) == 0 {
 		return 0
@@ -136,14 +162,27 @@ func duplicationRatio(list []uint64) float64 {
 	}
 	return float64(len(list)-len(seen)) / float64(len(list))
 }
+
+// sentenceCount counts sequences of terminal punctuation ('.', '!', '?')
+// as a single sentence end. So "what?!" and "Really???" each count as 1.
+//
+// Examples:
+//
+//	"Wait... what?! Really???" -> 3
+//	"Paragraph one.\n\nParagraph two.\nSame paragraph continued." -> 2
 func sentenceCount(s string) int {
-	re := regexp.MustCompile(`[.!?]+|\n+`)
-	parts := re.Split(s, -1)
-	n := 0
-	for _, p := range parts {
-		if strings.TrimSpace(p) != "" {
-			n++
+	count := 0
+	inTermRun := false
+	for _, r := range s {
+		switch r {
+		case '.', '!', '?':
+			if !inTermRun {
+				count++
+				inTermRun = true
+			}
+		default:
+			inTermRun = false
 		}
 	}
-	return n
+	return count
 }
